@@ -426,32 +426,38 @@ def generate_outfit_flatlay_image(component_images, weather_desc, product_names=
         st.warning(f"AI 코디 화보 생성 실패, 캔버스 보드로 대체합니다: {e}")
         return create_flatlay_fallback_board(component_images)
 
+class ItemLocation(BaseModel):
+    item_index: int
+    item_name: str
+    x: int
+    y: int
+
+class ItemLocationsResponse(BaseModel):
+    locations: list[ItemLocation]
+
 def detect_item_coordinates(image, numbered_keywords):
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
     
+    # Clean the keywords to match what's shown
+    keywords_clean = [k.split("_")[-1] if "_" in k else k for k in numbered_keywords]
+    
     prompt = f"""
-    당신은 패션 코디 전문 에디터입니다.
-    제공된 패션 플랫레이(Flat-lay) 이미지를 분석하고 아래 나열된 각 의류/소품의 정확한 시각적 중심점(x, y)을 찾으세요.
-    좌표는 이미지 캔버스를 기준으로 한 상대적 백분율(0에서 100 사이)로 반환해야 합니다.
-    x는 가로 축 (0 = 왼쪽 테두리, 100 = 오른쪽 테두리)
-    y는 세로 축 (0 = 위쪽 테두리, 100 = 아래쪽 테두리)
+    당신은 패션 이미지 분석가입니다.
+    제공된 패션 플랫레이(Flat-lay) 이미지에서 다음 아이템들의 정중앙 중심점 좌표(x, y)를 정밀하게 검출해야 합니다.
+    각 아이템의 실제 옷/가방/신발 등이 캔버스 상에서 그려져 있는 영역의 한가운데를 가리키는 x, y 백분율 좌표(0~100)를 구하세요.
     
-    찾아야 할 아이템 목록 (인덱스_아이템명 형식):
-    {", ".join([f"'{k}'" for k in numbered_keywords])}
+    분석할 아이템 목록:
+    {", ".join([f"인덱스 {idx}: {k}" for idx, k in enumerate(keywords_clean)])}
     
-    정확히 아래 형식의 JSON 객체로 반환하세요 (마크다운 블록이나 다른 텍스트는 절대 포함하지 마세요):
-    {{
-        "인덱스_아이템명": {{ "x": 정수, "y": 정수 }},
-        ...
-    }}
+    각 아이템에 대해 인덱스 번호(item_index), 아이템명(item_name), 그리고 정확한 x, y 좌표를 응답 스키마에 맞춰 작성하세요.
+    - x: 가로 비율 (0 = 왼쪽 가장자리, 100 = 오른쪽 가장자리)
+    - y: 세로 비율 (0 = 위쪽 가장자리, 100 = 아래쪽 가장자리)
     
-    주의 사항:
-    - JSON 객체의 키(Key)는 반드시 위에 제공된 '인덱스_아이템명' 목록과 토씨 하나 틀리지 않고 100% 동일해야 합니다. 영어로 번역하거나 형식을 변경하지 마세요.
-    - 정밀하게 위치를 찾으세요. 아이템의 실제 중심점을 가리켜야 합니다. 예:
-      - 신발/부츠: y는 보통 75에서 95 사이입니다.
-      - 상의/블라우스: y는 보통 20에서 45 사이입니다.
-      - 하의/바지/스커트: y는 보통 45에서 80 사이입니다.
-      - 가방/아우터: 실제로 이미지 안에서 렌더링되어 나타난 부위를 찾으세요.
+    의류 분류별 일반적인 위치 참고:
+    - 상의(블라우스, 셔츠, 티셔츠): 보통 y=20~45 범위의 중앙부
+    - 하의(스커트, 팬츠, 슬랙스): 보통 y=45~80 범위의 중앙부
+    - 신발(부츠, 샌들, 펌프스): 보통 y=75~95 범위의 최하단 중앙부
+    - 아우터(가디건, 코트, 자켓) 및 가방(토트백, 숄더백): 해당 제품이 렌더링되어 겉에 실존하는 위치
     """
     
     try:
@@ -470,36 +476,25 @@ def detect_item_coordinates(image, numbered_keywords):
             contents=[prompt, image_part],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
+                response_schema=ItemLocationsResponse,
             ),
         )
         data = json.loads(response.text)
+        locations = data.get("locations", [])
         
         # Build mapping from numbered_keywords to coordinates
         coord_map = {}
         for num_kw in numbered_keywords:
-            match_key = None
-            prefix = num_kw.split("_")[0] + "_"
+            coord_map[num_kw] = None
             
-            # 1. Exact match
-            for key in data.keys():
-                if key == num_kw:
-                    match_key = key
-                    break
-                    
-            # 2. Fallback index prefix match (handles translation or renaming by model)
-            if not match_key:
-                for key in data.keys():
-                    if key.startswith(prefix):
-                        match_key = key
-                        break
-                        
-            if match_key and isinstance(data[match_key], dict):
+        for loc in locations:
+            idx = loc.get("item_index")
+            if idx is not None and 0 <= idx < len(numbered_keywords):
+                num_kw = numbered_keywords[idx]
                 coord_map[num_kw] = {
-                    "x": int(data[match_key].get("x", 50)),
-                    "y": int(data[match_key].get("y", 50))
+                    "x": int(loc.get("x", 50)),
+                    "y": int(loc.get("y", 50))
                 }
-            else:
-                coord_map[num_kw] = None
         return coord_map
     except Exception as e:
         print(f"Error detecting item coordinates: {e}")

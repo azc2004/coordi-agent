@@ -40,7 +40,7 @@ def extract_coordi_keywords(product_info, image=None):
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
     
     category_mapping_prompt = """
-    Available Categories for Filtering (category_level & category_code):
+    필터링 가능한 카테고리 정보 (category_level 및 category_code):
     - 여성 원피스: dpCtgrNo2 = 32509
     - 여성 가디건: dpCtgrNo2 = 32538
     - 여성 니트/스웨터: dpCtgrNo2 = 32548
@@ -236,3 +236,264 @@ def generate_try_on_image(model_input, cloth_img_url, category_name="의류", ad
         st.warning(f"Gemini 가상 착장 모델 호출 중 오류가 발생하여 코디 보드로 대체합니다: {e}")
         # Fallback: Lookbook Coordination Board (0% Hallucination)
         return create_coordination_board(model_input, cloth_img_url)
+
+class OutfitComponent(BaseModel):
+    category: str = Field(description="코디 품목 구분 (예: 상의, 하의, 신발, 가방, 아우터 등)")
+    gnd_cd: str = Field(description="성별 코드 ('01': 남성, '02': 여성, '03': 남녀공용)")
+    category_level: str = Field(description="카테고리 필터 레벨 ('dpCtgrNo2' 또는 'dpCtgrNo3' 또는 '')")
+    category_code: str = Field(description="카테고리 번호 (제공된 매핑 목록에 일치할 시, 없으면 '')")
+    search_keyword: str = Field(description="하프클럽 상품 검색을 위한 검색어. 성별, 브랜드, 카테고리명을 제외한 스타일 속성 키워드 (예: '러플 린넨 블라우스', '핀턱 와이드 슬랙스', '가죽 스트랩 샌들')")
+
+class ContextAwareOutfitResponse(BaseModel):
+    theme: str = Field(description="오늘의 코디 스타일링 테마 제목 (예: '러블리 비즈니스 캐주얼룩', '화사한 써머 데이트룩')")
+    description: str = Field(description="이 코디에 대한 스타일링 가이드 및 설명. 퀀잇 사이트 어조처럼 상세하고 친근한 존댓말 한글로 작성 (2~3문장).")
+    tags: list[str] = Field(description="코디에 어울리는 감성적인 해시태그 목록 (예: ['#부슬부슬', '#러플블라우스', '#데이트룩'])")
+    components: list[OutfitComponent] = Field(description="이 코디를 구성하는 3~4개의 패션 아이템 상세 사양 목록")
+
+def generate_context_aware_outfit(target_date: str, weather: str, gender: str, age_group: str, situation: str, personal_color: str, style_preference: str):
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    
+    category_mapping_prompt = """
+    필터링 가능한 카테고리 정보 (category_level 및 category_code):
+    - 여성 원피스: dpCtgrNo2 = 32509
+    - 여성 가디건: dpCtgrNo2 = 32538
+    - 여성 니트/스웨터: dpCtgrNo2 = 32548
+    - 여성 셔츠/블라우스: dpCtgrNo2 = 32558
+    - 여성 티셔츠: dpCtgrNo2 = 32510
+    - 여성 스커트: dpCtgrNo2 = 32539
+    - 여성 데님팬츠: dpCtgrNo2 = 32568
+    - 여성 일반 팬츠/슬랙스: dpCtgrNo2 = 32529
+    - 여성 자켓/아우터: dpCtgrNo2 = 32540
+
+    - 남성 티셔츠: dpCtgrNo2 = 32618
+    - 남성 팬츠/슬랙스: dpCtgrNo2 = 32609
+    - 남성 셔츠: dpCtgrNo2 = 32619
+    - 남성 니트/스웨터: dpCtgrNo2 = 32608
+    - 남성 자켓/아우터: dpCtgrNo2 = 32540
+    """
+
+    prompt = f"""
+    당신은 퀀잇(Queenit) 스타일의 전문 패션 디렉터입니다.
+    오늘의 상황 정보를 바탕으로 가장 멋진 '오늘의 코디'를 제안해주세요.
+
+    [상황 정보]
+    - 날짜: {target_date}
+    - 날씨: {weather}
+    - 상황(TPO): {situation}
+    - 타겟 성별: {gender}
+    - 타겟 연령대: {age_group}
+    - 퍼스널 컬러: {personal_color}
+    - 선호 스타일: {style_preference}
+
+    [준수 지침]
+    - 이 상황(날짜, 날씨, TPO)과 타겟(성별, 연령대, 퍼스널 컬러, 선호 스타일)에 완벽하게 어울리는 코디 테마 제목(theme), 설명(description), 감성 태그(tags), 그리고 구성 품목(components, 3~4개)을 작성합니다.
+    - 상황(TPO)에 맞추어 엄격한 스타일링 규칙을 적용하세요 (예: 장례식/조문인 경우 무조건 어두운 무채색 계열과 단정한 핏, 결혼식 하객인 경우 신부의 색인 흰색을 피하고 포멀한 핏 등).
+    - 퍼스널 컬러나 선호 스타일이 '선택 안함'이 아닐 경우, 해당 컬러 팔레트와 스타일 무드를 코디에 적극 반영하세요.
+    - 설명(description)은 퀀잇 '오늘의 코디'처럼 상세하고 친근한 존댓말로, 오늘 입으면 왜 좋은지 설명해주세요.
+    - 구성 품목(components)은 상의, 하의, 신발, (선택적: 아우터 또는 가방/우산 등)으로 구성해주세요.
+    - 카테고리 매핑 정보에 일치하는 품목이 있다면 category_level과 category_code를 정확히 지정하고, 없으면 빈 문자열("")로 두세요.
+    - search_keyword에는 카테고리명(예: 바지, 셔츠, 신발)이나 성별을 제외하고 스타일 특징(예: '비비드 린넨', '하이웨이스트 핀턱', '레인부츠')만 담아주세요.
+    - 성별(gnd_cd) 코드는 남성이면 '01', 여성이면 '02', 공용이면 '03'으로 올바르게 지정하세요.
+
+    카테고리 매핑 목록:
+    {category_mapping_prompt}
+    """
+    
+    try:
+        response = call_gemini_with_retry(
+            client=client,
+            model='gemini-2.5-flash',
+            contents=[prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=ContextAwareOutfitResponse,
+                temperature=0.7,
+            ),
+        )
+        return response.text
+    except Exception as e:
+        st.error(f"Gemini API 호출 오류: {e}")
+        return None
+
+def create_flatlay_fallback_board(component_images):
+    # Pillow로 잡지 화보 느낌의 캔버스 생성
+    # component_images: list of PIL.Image
+    n = len(component_images)
+    if n == 0:
+        return None
+        
+    canvas_w, canvas_h = 900, 1200 # 3:4 비율 (가로 900, 세로 1200)
+    canvas = Image.new("RGB", (canvas_w, canvas_h), (247, 245, 242)) # 크림색 배경
+    
+    if n == 1:
+        img = ImageOps.fit(component_images[0], (800, 1100), Image.Resampling.LANCZOS)
+        canvas.paste(img, (50, 50))
+    elif n == 2:
+        img1 = ImageOps.fit(component_images[0], (800, 500), Image.Resampling.LANCZOS)
+        img2 = ImageOps.fit(component_images[1], (800, 500), Image.Resampling.LANCZOS)
+        canvas.paste(img1, (50, 50))
+        canvas.paste(img2, (50, 650))
+    elif n == 3:
+        img1 = ImageOps.fit(component_images[0], (800, 600), Image.Resampling.LANCZOS) # 메인(상의 등)
+        img2 = ImageOps.fit(component_images[1], (380, 450), Image.Resampling.LANCZOS) # 하의
+        img3 = ImageOps.fit(component_images[2], (380, 450), Image.Resampling.LANCZOS) # 신발/가방
+        canvas.paste(img1, (50, 50))
+        canvas.paste(img2, (50, 700))
+        canvas.paste(img3, (470, 700))
+    else:
+        # 4개 이상
+        img1 = ImageOps.fit(component_images[0], (380, 500), Image.Resampling.LANCZOS)
+        img2 = ImageOps.fit(component_images[1], (380, 500), Image.Resampling.LANCZOS)
+        img3 = ImageOps.fit(component_images[2], (380, 500), Image.Resampling.LANCZOS)
+        img4 = ImageOps.fit(component_images[3], (380, 500), Image.Resampling.LANCZOS)
+        canvas.paste(img1, (50, 50))
+        canvas.paste(img2, (470, 50))
+        canvas.paste(img3, (50, 650))
+        canvas.paste(img4, (470, 650))
+        
+    return canvas
+
+def generate_outfit_flatlay_image(component_images, weather_desc, product_names=None, has_bag=False, has_outer=False):
+    if not component_images:
+        return None
+        
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    
+    # Conditionally generate layout guidelines to prevent hallucination
+    styling_rules = []
+    rule_idx = 2
+    
+    # Strict rule for straight pants and shoes alignment
+    styling_rules.append(f"{rule_idx}. [매우 중요] 하의(팬츠, 청바지, 슬랙스 등)는 절대 반으로 접거나 구기지 말고, 다리 모양 그대로 아래로 길게 일자로 완전히 펼쳐진 상태(Laid out straight without folding)로 배치하세요. 그리고 신발(구두, 부츠, 샌들 등)은 일자로 펼쳐진 하의의 맨 밑단 바로 아래에 자연스럽게 맞닿아 이어지도록 배치하여 실제 서 있는 다리 실루엣처럼 연출하세요.")
+    rule_idx += 1
+    
+    if has_outer:
+        styling_rules.append(f"{rule_idx}. [매우 중요] 코디 상품에 '외투/아우터(코트, 자켓, 가디건 등)'가 포함되어 있으므로, 외투를 상의 밑에 깔아두지 마세요. 외투가 상의(블라우스, 셔츠 등) 바깥쪽을 덮거나 걸쳐진 형태로 그리세요 (즉, 상의는 안쪽에 입고 외투가 겉에 입혀진 상태여야 함).")
+        rule_idx += 1
+        
+    if has_bag:
+        styling_rules.append(f"{rule_idx}. [매우 중요] 코디 상품에 '가방'이 포함되어 있으므로, 가방을 구석 바닥에 따로 두지 마세요. 가방의 어깨끈(Strap)이 상의/아우터의 어깨 부위에 자연스럽게 걸쳐져 흘러내리는 '어깨에 메고 있는 형태'로 겹쳐서 입체적으로 배치하세요.")
+        rule_idx += 1
+        
+    styling_rules_text = "\n    ".join(styling_rules)
+    if styling_rules_text:
+        styling_rules_text = "\n    " + styling_rules_text
+        
+    prd_context = ""
+    if product_names:
+        prd_list_str = ", ".join([f"'{p}'" for p in product_names])
+        prd_context = f"\n    [제공된 실제 코디 상품 목록]\n    - {prd_list_str}\n"
+    
+    prompt = f"""
+    당신은 최상급 패션 매거진의 디렉터이자 포토그래퍼입니다. 
+    제공된 {len(component_images)}개의 실제 패션 상품 이미지들을 사용하여, 
+    인물 모델 없이 의류/소품들만 바닥에 눕혀 코디하는 감각적인 '플랫레이(Flat-lay)' 사진을 만들어야 합니다.
+
+    [상황/날씨 연출 분위기]
+    {weather_desc}
+    위 날씨/상황의 분위기가 느껴지는 감성적이고 부드러운 스튜디오 바닥 배경(예: 밝은 우드, 대리석, 패브릭 매트 등)을 사용하세요.
+    {prd_context}
+    [핵심 준수 지침]
+    1. 각 상품의 위치는 '인체(몸)의 실제 착용 위치'에 맞게 직관적으로 정렬해주세요. (예: 상의는 화면의 위쪽 중앙, 하의는 상의의 바로 아래쪽, 신발은 하의 맨 아래쪽, 가방이나 소품은 자연스럽게 측면에 배치).{styling_rules_text}
+    {rule_idx}. 제공된 코디 구성 상품 사진에 있는 제품들은 반드시 결과물 사진에 명확하고 비중 있게 노출되어야 합니다. 누락되는 상품이 없어야 합니다.
+    {rule_idx+1}. 제공된 상품 이미지들의 형태, 색상, 로고, 패턴, 디테일을 환각(Hallucination)이나 변형 없이 100% 동일하게 유지하여 극도로 사실적으로 표현하세요. 제공된 실물 상품이 사진의 주인공입니다.
+    {rule_idx+2}. [매우 중요] 이미지 위에 제품과 무관한 어떠한 글자/텍스트(예: SIZE, 2color, COOL 등), 아이콘(온도계, 화살표 등), 로고, 그래픽 요소도 절대 생성하지 마세요. 오직 옷과 자연스러운 바닥 배경만 존재해야 합니다.
+    {rule_idx+3}. [경고] 입력 이미지로 제공되지 않은 다른 의류, 신발, 가방, 액세서리 등을 임의로 추가하여 그리지 마세요. 오직 입력 이미지로 제공된 상품들만 사용하여 코디 샷을 완성해야 하며, 제품의 총 개수는 제공된 입력 이미지의 개수({len(component_images)}개)와 정확히 일치해야 합니다.
+    {rule_idx+4}. 이미지는 세로형(3:4 비율) 포스터 컷으로 렌더링하세요.
+    """
+    
+    contents = [prompt] + component_images
+    
+    try:
+        response = call_gemini_with_retry(
+            client=client,
+            model='gemini-3.1-flash-image',
+            contents=contents,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(
+                    aspect_ratio="3:4",
+                ),
+            ),
+        )
+        for part in response.candidates[0].content.parts:
+            if part.inline_data:
+                return Image.open(BytesIO(part.inline_data.data))
+                
+        # 실패 시 Fallback
+        return create_flatlay_fallback_board(component_images)
+    except Exception as e:
+        st.warning(f"AI 코디 화보 생성 실패, 캔버스 보드로 대체합니다: {e}")
+        return create_flatlay_fallback_board(component_images)
+
+def detect_item_coordinates(image, keywords):
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    
+    # Clean the keywords to match what's shown
+    keywords_clean = [k.split()[-1] if k else '아이템' for k in keywords]
+    
+    prompt = f"""
+    당신은 패션 코디 전문 에디터입니다.
+    제공된 패션 플랫레이(Flat-lay) 이미지를 분석하고 아래 나열된 각 의류/소품의 정확한 시각적 중심점(x, y)을 찾으세요.
+    좌표는 이미지 캔버스를 기준으로 한 상대적 백분율(0에서 100 사이)로 반환해야 합니다.
+    x는 가로 축 (0 = 왼쪽 테두리, 100 = 오른쪽 테두리)
+    y는 세로 축 (0 = 위쪽 테두리, 100 = 아래쪽 테두리)
+    
+    찾아야 할 아이템 목록:
+    {", ".join([f"'{k}'" for k in keywords_clean])}
+    
+    정확히 아래 형식의 JSON 객체로 반환하세요 (마크다운 블록이나 다른 텍스트는 절대 포함하지 마세요):
+    {{
+        "item_name": {{ "x": 정수, "y": 정수 }},
+        ...
+    }}
+    
+    주의 사항:
+    - JSON 객체의 키(Key)는 반드시 위에 제공된 아이템 목록명과 정확히 일치해야 합니다.
+    - 정밀하게 위치를 찾으세요. 아이템의 실제 중심점을 가리켜야 합니다. 예:
+      - 신발/부츠: y는 보통 75에서 95 사이입니다.
+      - 상의/블라우스: y는 보통 20에서 45 사이입니다.
+      - 하의/바지/스커트: y는 보통 45에서 80 사이입니다.
+      - 가방/아우터: 실제로 이미지 안에서 렌더링되어 나타난 부위를 찾으세요.
+    """
+    
+    try:
+        buffered = BytesIO()
+        img_rgb = image.convert("RGB") if image.mode in ("RGBA", "P") else image
+        img_rgb.save(buffered, format="JPEG")
+        img_bytes = buffered.getvalue()
+        
+        image_part = types.Part.from_bytes(
+            data=img_bytes,
+            mime_type="image/jpeg",
+        )
+        
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[prompt, image_part],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+            ),
+        )
+        data = json.loads(response.text)
+        
+        # Build mapping from clean keywords to original keywords
+        coord_map = {}
+        for original_k, clean_k in zip(keywords, keywords_clean):
+            match_key = None
+            for key in data.keys():
+                if clean_k in key or key in clean_k:
+                    match_key = key
+                    break
+            if match_key and isinstance(data[match_key], dict):
+                coord_map[original_k] = {
+                    "x": int(data[match_key].get("x", 50)),
+                    "y": int(data[match_key].get("y", 50))
+                }
+            else:
+                coord_map[original_k] = None
+        return coord_map
+    except Exception as e:
+        print(f"Error detecting item coordinates: {e}")
+        return {}
+

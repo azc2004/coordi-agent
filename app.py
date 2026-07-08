@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import requests
+import base64
 from io import BytesIO
 from PIL import Image
 import importlib
@@ -8,8 +9,9 @@ import api_service
 import llm_service
 importlib.reload(api_service)
 importlib.reload(llm_service)
+import datetime
 from api_service import fetch_product_list, fetch_product_info, search_products
-from llm_service import extract_coordi_keywords, generate_try_on_image
+from llm_service import extract_coordi_keywords, generate_try_on_image, generate_context_aware_outfit, generate_outfit_flatlay_image
 
 st.set_page_config(layout="wide", page_title="Coordi Recommendation Prototype")
 
@@ -23,10 +25,297 @@ def load_image_from_url(url):
     except Exception as e:
         return None
 
+def classify_product(prd_nm, keyword=""):
+    text = (prd_nm + " " + keyword).lower()
+    
+    # Bag
+    bag_keywords = ["가방", "숄더백", "크로스백", "토트백", "백팩", "핸드백", "클러치백", "에코백", "미니백", "체인백", "쇼퍼백", "클러치", "힙색"]
+    is_bag = any(w in text for w in bag_keywords)
+    if "백" in text and not is_bag:
+        # Exclude common non-bag garment detail keywords that contain "백"
+        non_bag = ["백색", "백라인", "백지퍼", "백밴딩", "백포인트", "백멜란지", "백트임", "백기장", "백슬릿", "백버튼"]
+        if not any(nb in text for nb in non_bag):
+            is_bag = True
+            
+    if is_bag:
+        return "BAG"
+    # Shoes
+    if any(w in text for w in ["부츠", "구두", "신발", "슈즈", "로퍼", "슬립온", "샌들", "스니커즈", "힐", "워커", "레인부츠"]):
+        return "SHOES"
+    # Outer
+    if any(w in text for w in ["코트", "자켓", "점퍼", "가디건", "아우터", "패딩", "재킷", "레인코트", "바람막이"]):
+        return "OUTER"
+    # Bottom
+    if any(w in text for w in ["팬츠", "슬랙스", "청바지", "데님", "스커트", "치마", "바지", "레깅스"]):
+        return "BOTTOM"
+    # Top
+    if any(w in text for w in ["티셔츠", "셔츠", "블라우스", "니트", "스웨터", "탑", "나시", "원피스", "조끼", "베스트"]):
+        return "TOP"
+        
+    return "ACC"
+
+def render_context_aware_ui():
+    opt_col, res_col = st.columns([1, 3])
+    
+    with opt_col:
+        st.subheader("🎛️ 상황 옵션")
+        target_date = st.date_input("📅 날짜 선택", datetime.date.today())
+        target_date_str = target_date.strftime("%Y-%m-%d")
+        
+        weather_options = ["맑음 ☀️", "비 🌧️", "흐림 ☁️", "눈 ❄️", "바람/추움 🌬️"]
+        
+        forecast_dict = api_service.fetch_daily_weather_forecast_seoul()
+        
+        default_weather_idx = 0
+        if target_date_str in forecast_dict:
+            auto_weather = forecast_dict[target_date_str]
+            auto_weather_str = auto_weather['weather_str']
+            st.info(f"📍 일기예보 연동됨 ({auto_weather['temp_min']}°~{auto_weather['temp_max']}°)")
+            
+            for i, opt in enumerate(weather_options):
+                if auto_weather_str in opt:
+                    default_weather_idx = i
+                    break
+        else:
+            st.warning("선택한 날짜의 일기예보 정보가 없습니다.")
+            
+        weather_str = st.selectbox("날씨 (예보 기반 자동세팅, 변경 가능)", weather_options, index=default_weather_idx)
+            
+        situation_str = st.selectbox("상황(TPO) 선택", ["데일리/캐주얼", "직장/오피스룩", "데이트", "결혼식 하객", "장례식/조문", "면접/미팅", "골프/야외활동", "파티/모임"])
+        gender_str = st.selectbox("성별 선택", ["여성 👚", "남성 👕"])
+        age_str = st.selectbox("연령대 선택", ["20대", "30대", "40대", "50대", "60대", "70대 이상"], index=1)
+        personal_color_str = st.selectbox("퍼스널 컬러", ["선택 안함", "봄 웜톤", "여름 쿨톤", "가을 웜톤", "겨울 쿨톤"])
+        style_str = st.selectbox("선호 스타일", ["선택 안함", "미니멀", "스트릿/힙합", "로맨틱/페미닌", "빈티지/아메카지"])
+        
+        btn = st.button("👗 오늘의 코디 추천받기", use_container_width=True, type="primary")
+
+    if not btn:
+        return
+        
+    with res_col:
+        with st.spinner(f"'{weather_str}' 날씨와 '{situation_str}'에 어울리는 코디를 분석 중입니다..."):
+            res_str = generate_context_aware_outfit(
+                target_date.strftime("%Y년 %m월 %d일"), 
+                weather_str, gender_str, age_str, situation_str, personal_color_str, style_str
+            )
+            
+            if res_str:
+                try:
+                    outfit_data = json.loads(res_str)
+                except json.JSONDecodeError:
+                    st.error("AI 응답을 파싱하는데 실패했습니다.")
+                    return
+                
+                st.write("---")
+                
+                # Render Outfit Description (replacing the header)
+                st.markdown(f"""
+                <div style="padding: 20px; background-color: #f8f9fa; border-radius: 12px; margin-bottom: 20px;">
+                    <h3 style="margin-top:0; font-size: 20px; font-weight: bold; color: #333;">✨ {outfit_data.get('theme', '오늘의 코디 추천')}</h3>
+                    <p style="margin-bottom:0; font-size: 16px; line-height: 1.6; color: #555;">{outfit_data.get('description', '')}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                components = outfit_data.get("components", [])
+                matched_products = []
+                component_images = []
+                
+                fetch_status = st.empty()
+                with fetch_status.container():
+                    st.info("코디 구성 상품을 검색하고 있습니다...")
+                
+                for comp in components:
+                    s_keyword = comp.get("search_keyword", "")
+                    gnd = comp.get("gnd_cd", "")
+                    c_level = comp.get("category_level", "")
+                    c_code = comp.get("category_code", "")
+                    
+                    # Fallback configurations: try broad keyword first, then relax category filters
+                    keywords_to_try = [s_keyword]
+                    if len(s_keyword.split()) > 1:
+                        keywords_to_try.append(s_keyword.split()[-1]) # e.g. "슬랙스" from "핀턱 슬랙스"
+                    
+                    search_configs = []
+                    for kw in keywords_to_try:
+                        search_configs.append({"kw": kw, "lvl": c_level, "code": c_code})
+                    for kw in keywords_to_try:
+                        search_configs.append({"kw": kw, "lvl": c_level, "code": ""}) # relax category code
+                    
+                    matched = False
+                    for cfg in search_configs:
+                        search_res = search_products(
+                            keyword=cfg["kw"],
+                            gnd_cd=gnd,
+                            cat_level=cfg["lvl"],
+                            cat_code=cfg["code"]
+                        )
+                        
+                        if search_res:
+                            for sp in search_res:
+                                source = sp.get('_source', {})
+                                gnd_list = source.get('gndCd', [])
+                                if "01" in gnd_list and "02" in gnd_list and "03" in gnd_list:
+                                    continue
+                                    
+                                img_url = source.get('appPrdImgUrl', '')
+                                if img_url:
+                                    img = load_image_from_url(img_url)
+                                    if img:
+                                        source['matched_keyword'] = s_keyword
+                                        matched_products.append(source)
+                                        component_images.append(img)
+                                        matched = True
+                                        break
+                            if matched:
+                                break
+                                
+                fetch_status.empty()
+                
+                if not matched_products:
+                    st.warning("추천 코디에 해당하는 상품을 찾지 못했습니다.")
+                    return
+                    
+                has_bag = any(classify_product(p.get('prdNm', ''), p.get('matched_keyword', '')) == "BAG" for p in matched_products)
+                has_outer = any(classify_product(p.get('prdNm', ''), p.get('matched_keyword', '')) == "OUTER" for p in matched_products)
+                
+                prd_names = [p.get('prdNm', '') for p in matched_products]
+                with st.spinner("최고의 패션 매거진 화보(코디 샷)를 생성 중입니다... (약 15~30초 소요)"):
+                    flatlay_img = generate_outfit_flatlay_image(component_images, weather_str, prd_names, has_bag, has_outer)
+                    
+                # Layout: Split into Left (Image) and Right (Products & Description)
+                res_col_left, res_col_right = st.columns([4, 5])
+                
+                with res_col_left:
+                    if flatlay_img:
+                        if flatlay_img.mode in ("RGBA", "P"):
+                            flatlay_img = flatlay_img.convert("RGB")
+                        buffered = BytesIO()
+                        flatlay_img.save(buffered, format="JPEG")
+                        img_b64 = base64.b64encode(buffered.getvalue()).decode()
+                        
+                        class_coords = {
+                            "TOP": ("right", 0.5, 30),
+                            "BOTTOM": ("left", 0.5, 60),
+                            "SHOES": ("right", 0.5, 88),
+                        }
+                        tags_overlay_html = ""
+                        used_coords = []
+                        side_count = 0
+                        
+                        # Run vision locator to get exact coordinates of each item in the generated image
+                        detected_coords = {}
+                        try:
+                            keywords_list = [prod.get('matched_keyword', '').split()[-1] if prod.get('matched_keyword', '') else '아이템' for prod in matched_products]
+                            with st.spinner("해시태그 위치 정밀 조율 중..."):
+                                detected_coords = llm_service.detect_item_coordinates(flatlay_img, keywords_list)
+                        except Exception as ex:
+                            print(f"Vision coordinate detection failed: {ex}")
+                        
+                        for idx, prod in enumerate(matched_products):
+                            keyword = prod.get('matched_keyword', '')
+                            prd_nm = prod.get('prdNm', '')
+                            category = classify_product(prd_nm, keyword)
+                            tag_word = keyword.split()[-1] if keyword else '아이템'
+                            
+                            # Check if Vision AI found coordinates
+                            coord_data = detected_coords.get(tag_word) if detected_coords else None
+                            if coord_data and isinstance(coord_data, dict) and "x" in coord_data and "y" in coord_data:
+                                rx = float(coord_data["x"]) / 100.0
+                                ry = float(coord_data["y"])
+                                side = "left" if rx < 0.5 else "right"
+                            else:
+                                # Fallback Heuristics
+                                if category in class_coords:
+                                    side, rx, ry = class_coords[category]
+                                else:
+                                    # Spatially balance side items (first goes right, second left, etc.)
+                                    if side_count % 2 == 0:
+                                        side, rx = "right", 0.75
+                                    else:
+                                        side, rx = "left", 0.25
+                                        
+                                    if category == "OUTER" or category == "BAG":
+                                        ry = 45
+                                    else: # ACC
+                                        ry = 25
+                                    side_count += 1
+                            
+                            # Avoid overlap on y-axis
+                            while any(abs(c[2] - ry) < 6 and c[0] == side for c in used_coords):
+                                ry += 8
+                                
+                            used_coords.append((side, rx, ry))
+                            
+                            tag_word = keyword.split()[-1] if keyword else '아이템'
+                            prd_link = f"https://www.halfclub.com/product/{prod.get('prdNo', '')}"
+                            
+                            # Dot position on the image (0% to 100%)
+                            dot_left = f"{rx * 100}%"
+                            dot_top = f"{ry}%"
+                            
+                            # Render Dot (Red dot with white border and shadow)
+                            tags_overlay_html += f'<div style="position: absolute; top: {dot_top}; left: {dot_left}; width: 8px; height: 8px; border-radius: 50%; background-color: #ff4b4b; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transform: translate(-50%, -50%); z-index: 10;"></div>\n'
+                            
+                            # Render Line and Tag inside the container (no padding)
+                            tag_width = 80
+                            tag_margin = 15
+                            tag_end = tag_margin + tag_width # 95px
+                            
+                            if side == "left":
+                                tag_style = f"position: absolute; top: {ry}%; left: {tag_margin}px; width: {tag_width}px; height: 28px; line-height: 25px; text-align: center; background-color: white; color: #ff4b4b; border-radius: 20px; font-size: 12px; font-weight: bold; text-decoration: none; box-shadow: 0 2px 8px rgba(255, 75, 75, 0.2); border: 1.5px solid #ff4b4b; z-index: 10; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: block; transform: translateY(-50%);"
+                                line_style = f"position: absolute; top: {ry}%; left: {tag_end}px; width: calc({dot_left} - {tag_end}px); height: 0px; border-top: 1.5px dashed #ff4b4b; transform: translateY(-50%); z-index: 5;"
+                            else: # right
+                                tag_style = f"position: absolute; top: {ry}%; right: {tag_margin}px; width: {tag_width}px; height: 28px; line-height: 25px; text-align: center; background-color: white; color: #ff4b4b; border-radius: 20px; font-size: 12px; font-weight: bold; text-decoration: none; box-shadow: 0 2px 8px rgba(255, 75, 75, 0.2); border: 1.5px solid #ff4b4b; z-index: 10; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: block; transform: translateY(-50%);"
+                                line_style = f"position: absolute; top: {ry}%; left: {dot_left}; width: calc(100% - {tag_end}px - {dot_left}); height: 0px; border-top: 1.5px dashed #ff4b4b; transform: translateY(-50%); z-index: 5;"
+                            
+                            tags_overlay_html += f'<a href="{prd_link}" target="_blank" style="{tag_style}">#{tag_word}</a>\n'
+                            tags_overlay_html += f'<div style="{line_style}"></div>\n'
+                        
+                        html_code = f'<div style="position: relative; width: 100%; overflow: hidden; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);"><img src="data:image/jpeg;base64,{img_b64}" style="width: 100%; display: block;" />{tags_overlay_html}</div>'
+                        st.markdown(html_code, unsafe_allow_html=True)
+                        
+                    tags = outfit_data.get("tags", [])
+                    if tags:
+                        tags_html = "".join([f"<span style='display:inline-block; padding: 5px 12px; background-color:#f0f0f0; border-radius:20px; font-size:13px; color:#555; margin-right:8px; margin-top:15px;'>{t}</span>" for t in tags])
+                        st.markdown(f"<div>{tags_html}</div>", unsafe_allow_html=True)
+                
+                with res_col_right:
+                    st.write("### 🛍️ 코디 구성 상품")
+                    cols = st.columns(len(matched_products))
+                    for idx, prod in enumerate(matched_products):
+                        with cols[idx]:
+                            img_url = prod.get('appPrdImgUrl', '')
+                            prd_no = prod.get('prdNo', '')
+                            prd_nm = prod.get('prdNm', '')
+                            brand_nm = prod.get('brandNm', '')
+                            price = prod.get('dcPrcApp', 0)
+                            
+                            prd_link = f"https://www.halfclub.com/product/{prd_no}"
+                            
+                            if img_url:
+                                st.markdown(
+                                    f'<a href="{prd_link}" target="_blank">'
+                                    f'  <img src="{img_url}" style="width:100%; border-radius:8px; aspect-ratio:3/4; object-fit:cover; margin-bottom:8px; border:1px solid #eee;">'
+                                    f'</a>',
+                                    unsafe_allow_html=True
+                                )
+                            st.caption(f"**[{brand_nm}]**")
+                            st.markdown(f"<a href='{prd_link}' target='_blank' style='text-decoration:none; color:inherit;'><p style='font-size:12px; margin-bottom:2px; height:36px; overflow:hidden;'>{prd_nm}</p></a>", unsafe_allow_html=True)
+                            st.markdown(f"<span style='color:#ff4b4b; font-weight:bold;'>₩{price:,}</span>", unsafe_allow_html=True)
+                            st.markdown(f"<a href='{prd_link}' target='_blank' style='display:block; text-align:center; padding:6px 0; margin-top:10px; background-color:#333; color:white; border-radius:4px; font-size:12px; text-decoration:none; font-weight:bold;'>상세보기</a>", unsafe_allow_html=True)
+            else:
+                st.error("AI가 코디를 추천하지 못했습니다.")
+
 def main():
     st.title("👗 코디 상품 추천 서비스 프로토타입")
     st.markdown("왼쪽에서 상품을 선택하면, AI가 분석한 맞춤 코디와 실제 추천 상품이 우측에 실시간으로 표시됩니다.")
+    
+    use_context_aware = st.checkbox("🌟 상황인지형(Context-Aware) '오늘의 코디' 추천 모드 활성화", value=False)
     st.divider()
+    
+    if use_context_aware:
+        render_context_aware_ui()
+        return
     
     if "selected_product" not in st.session_state:
         st.session_state.selected_product = None

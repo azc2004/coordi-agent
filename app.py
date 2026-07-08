@@ -480,35 +480,20 @@ def render_manual_coordination_ui():
                 tags_overlay_html += f'<div style="position: absolute; top: {dot_top}; left: {dot_left}; width: 8px; height: 8px; border-radius: 50%; background-color: #ff4b4b; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transform: translate(-50%, -50%); z-index: 10;"></div>\n'
                 
                 tag_width = 80
-                line_y = f"{ry}%"
-                tag_y = f"calc({ry}% - 14px)"
-                prd_link = f"https://www.halfclub.com/product/{prod.get('prdNo', '')}"
+                tag_margin = 15
+                tag_end = tag_margin + tag_width # 95px
                 
                 if side == "left":
-                    line_left = "95px"
-                    line_width = f"calc({rx * 100}% - 95px)"
-                    tags_overlay_html += f"""
-                    <div style="position: absolute; top: {line_y}; left: {line_left}; width: {line_width}; border-top: 1px dashed #ff4b4b; z-index: 9;"></div>
-                    <a href="{prd_link}" target="_blank" style="text-decoration: none; position: absolute; top: {tag_y}; left: 15px; width: {tag_width}px; height: 28px; background-color: white; border: 1.5px solid #ff4b4b; border-radius: 14px; color: #ff4b4b; font-size: 11px; font-weight: bold; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.15); z-index: 11; transition: transform 0.2s;">
-                        #{tag_word}
-                    </a>
-                    """
-                else:
-                    line_left = f"{rx * 100}%"
-                    line_width = f"calc(100% - 95px - {rx * 100}%)"
-                    tags_overlay_html += f"""
-                    <div style="position: absolute; top: {line_y}; left: {line_left}; width: {line_width}; border-top: 1px dashed #ff4b4b; z-index: 9;"></div>
-                    <a href="{prd_link}" target="_blank" style="text-decoration: none; position: absolute; top: {tag_y}; right: 15px; width: {tag_width}px; height: 28px; background-color: white; border: 1.5px solid #ff4b4b; border-radius: 14px; color: #ff4b4b; font-size: 11px; font-weight: bold; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.15); z-index: 11; transition: transform 0.2s;">
-                        #{tag_word}
-                    </a>
-                    """
-                    
-            html_content = f"""
-            <div style="position: relative; width: 100%; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-                <img src="data:image/jpeg;base64,{img_b64}" style="width: 100%; display: block;" />
-                {tags_overlay_html}
-            </div>
-            """
+                    tag_style = f"position: absolute; top: {ry}%; left: {tag_margin}px; width: {tag_width}px; height: 28px; line-height: 25px; text-align: center; background-color: white; color: #ff4b4b; border-radius: 20px; font-size: 12px; font-weight: bold; text-decoration: none; box-shadow: 0 2px 8px rgba(255, 75, 75, 0.2); border: 1.5px solid #ff4b4b; z-index: 10; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: block; transform: translateY(-50%);"
+                    line_style = f"position: absolute; top: {ry}%; left: {tag_end}px; width: calc({dot_left} - {tag_end}px); height: 0px; border-top: 1.5px dashed #ff4b4b; transform: translateY(-50%); z-index: 5;"
+                else: # right
+                    tag_style = f"position: absolute; top: {ry}%; right: {tag_margin}px; width: {tag_width}px; height: 28px; line-height: 25px; text-align: center; background-color: white; color: #ff4b4b; border-radius: 20px; font-size: 12px; font-weight: bold; text-decoration: none; box-shadow: 0 2px 8px rgba(255, 75, 75, 0.2); border: 1.5px solid #ff4b4b; z-index: 10; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: block; transform: translateY(-50%);"
+                    line_style = f"position: absolute; top: {ry}%; left: {dot_left}; width: calc(100% - {tag_end}px - {dot_left}); height: 0px; border-top: 1.5px dashed #ff4b4b; transform: translateY(-50%); z-index: 5;"
+                
+                tags_overlay_html += f'<a href="{prd_link}" target="_blank" style="{tag_style}">#{tag_word}</a>\n'
+                tags_overlay_html += f'<div style="{line_style}"></div>\n'
+                
+            html_content = f'<div style="position: relative; width: 100%; overflow: hidden; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);"><img src="data:image/jpeg;base64,{img_b64}" style="width: 100%; display: block;" />{tags_overlay_html}</div>'
             st.markdown(html_content, unsafe_allow_html=True)
             
             # Display selected products list with details below the image

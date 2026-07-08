@@ -307,15 +307,249 @@ def render_context_aware_ui():
             else:
                 st.error("AI가 코디를 추천하지 못했습니다.")
 
+def render_manual_coordination_ui():
+    # Initialize session state for manual selected items
+    if "manual_selected_items" not in st.session_state:
+        st.session_state.manual_selected_items = []
+    if "manual_flatlay_img" not in st.session_state:
+        st.session_state.manual_flatlay_img = None
+    if "manual_detected_coords" not in st.session_state:
+        st.session_state.manual_detected_coords = {}
+        
+    opt_col, res_col = st.columns([4, 5])
+    
+    with opt_col:
+        st.subheader("🛍️ 선택된 코디 상품 목록")
+        selected_count = len(st.session_state.manual_selected_items)
+        st.caption(f"현재 선택된 상품: **{selected_count} / 6** (최소 2개 이상 선택해야 화보 완성이 가능합니다)")
+        
+        if selected_count > 0:
+            cols = st.columns(6)
+            for idx, prod in enumerate(st.session_state.manual_selected_items):
+                prd_nm = prod.get('prdNm', '상품')
+                img_url = prod.get('appPrdImgUrl', '')
+                with cols[idx]:
+                    if img_url:
+                        st.image(img_url, use_container_width=True)
+                    st.caption(prd_nm[:10] + "..." if len(prd_nm) > 10 else prd_nm)
+                    if st.button("❌", key=f"del_{idx}_{prod.get('prdNo')}", help="코디에서 제거"):
+                        st.session_state.manual_selected_items.pop(idx)
+                        st.session_state.manual_flatlay_img = None  # Reset generated image
+                        st.session_state.manual_detected_coords = {}
+                        st.rerun()
+        else:
+            st.info("아래 검색결과에서 상품을 찾아 ➕ 버튼을 클릭해 코디 상품으로 추가하세요.")
+            
+        st.divider()
+        st.subheader("🔍 상품 검색")
+        search_query = st.text_input("검색할 키워드를 입력하세요", placeholder="예: 블라우스, 슬랙스, 자켓, 가방, 로퍼", key="manual_search_query")
+        
+        if search_query:
+            with st.spinner("상품을 검색 중입니다..."):
+                search_results = search_products(search_query)
+                
+            if search_results:
+                st.write(f"검색 결과: **{len(search_results)}**개")
+                grid_cols = st.columns(3)
+                for s_idx, sp in enumerate(search_results):
+                    source = sp.get('_source', {})
+                    prd_no = source.get('prdNo')
+                    prd_nm = source.get('prdNm')
+                    brand_nm = source.get('brandNm')
+                    price = source.get('dcPrcApp', 0)
+                    img_url = source.get('appPrdImgUrl')
+                    
+                    with grid_cols[s_idx % 3]:
+                        if img_url:
+                            st.image(img_url, use_container_width=True)
+                        st.markdown(f"**[{brand_nm}]** {prd_nm[:25]}...")
+                        st.markdown(f"<span style='color:#ff4b4b; font-weight:bold;'>₩{price:,}</span>", unsafe_allow_html=True)
+                        
+                        # Check if already added
+                        is_added = any(p.get('prdNo') == prd_no for p in st.session_state.manual_selected_items)
+                        if is_added:
+                            st.button("추가됨 ✔️", key=f"add_{prd_no}", disabled=True, use_container_width=True)
+                        else:
+                            disable_add = selected_count >= 6
+                            if st.button("➕ 코디 추가", key=f"add_{prd_no}", disabled=disable_add, use_container_width=True):
+                                # Set match keyword from search query to categorize correctly
+                                source['matched_keyword'] = search_query
+                                st.session_state.manual_selected_items.append(source)
+                                st.session_state.manual_flatlay_img = None  # Reset generated image
+                                st.session_state.manual_detected_coords = {}
+                                st.rerun()
+            else:
+                st.warning("검색 결과가 없습니다.")
+                
+    with res_col:
+        st.subheader("📸 코디 완성 화보")
+        weather_options = ["맑음 ☀️", "비 🌧️", "흐림 ☁️", "눈 ❄️", "바람/추움 🌬️"]
+        weather_str = st.selectbox("배경 날씨/상황 선택", weather_options, key="manual_weather")
+        
+        btn_enabled = selected_count >= 2
+        generate_btn = st.button("✨ 코디 완성하기 (AI 화보 생성)", use_container_width=True, type="primary", disabled=not btn_enabled)
+        
+        if generate_btn:
+            component_images = []
+            matched_products = []
+            
+            with st.spinner("상품 이미지를 불러오는 중입니다..."):
+                for prod in st.session_state.manual_selected_items:
+                    img_url = prod.get('appPrdImgUrl', '')
+                    if img_url:
+                        img = load_image_from_url(img_url)
+                        if img:
+                            component_images.append(img)
+                            matched_products.append(prod)
+                            
+            if not component_images:
+                st.error("선택한 상품의 이미지를 불러오지 못했습니다.")
+                return
+                
+            has_bag = any(classify_product(p.get('prdNm', ''), p.get('matched_keyword', '')) == "BAG" for p in matched_products)
+            has_outer = any(classify_product(p.get('prdNm', ''), p.get('matched_keyword', '')) == "OUTER" for p in matched_products)
+            prd_names = [p.get('prdNm', '') for p in matched_products]
+            
+            with st.spinner("최고의 패션 매거진 화보(코디 샷)를 생성 중입니다... (약 15~30초 소요)"):
+                flatlay_img = generate_outfit_flatlay_image(component_images, weather_str, prd_names, has_bag, has_outer)
+                
+            if flatlay_img:
+                st.session_state.manual_flatlay_img = flatlay_img
+                # Run vision locator to get exact coordinates
+                keywords_list = [f"{idx}_{p.get('matched_keyword', '').split()[-1] if p.get('matched_keyword', '') else '아이템'}" for idx, p in enumerate(matched_products)]
+                with st.spinner("해시태그 위치 정밀 조율 중..."):
+                    detected_coords = llm_service.detect_item_coordinates(flatlay_img, keywords_list)
+                    st.session_state.manual_detected_coords = detected_coords
+            else:
+                st.error("화보 생성에 실패했습니다.")
+                
+        # Render current flatlay and hashtags if they exist
+        if st.session_state.manual_flatlay_img is not None:
+            flatlay_img = st.session_state.manual_flatlay_img
+            detected_coords = st.session_state.manual_detected_coords
+            matched_products = st.session_state.manual_selected_items
+            
+            if flatlay_img.mode in ("RGBA", "P"):
+                flatlay_img = flatlay_img.convert("RGB")
+            buffered = BytesIO()
+            flatlay_img.save(buffered, format="JPEG")
+            img_b64 = base64.b64encode(buffered.getvalue()).decode()
+            
+            class_coords = {
+                "TOP": ("right", 0.5, 30),
+                "BOTTOM": ("left", 0.5, 60),
+                "SHOES": ("right", 0.5, 88),
+            }
+            tags_overlay_html = ""
+            used_coords = []
+            side_count = 0
+            
+            for idx, prod in enumerate(matched_products):
+                keyword = prod.get('matched_keyword', '')
+                prd_nm = prod.get('prdNm', '')
+                category = classify_product(prd_nm, keyword)
+                tag_word = keyword.split()[-1] if keyword else '아이템'
+                
+                num_kw = f"{idx}_{tag_word}"
+                coord_data = detected_coords.get(num_kw) if detected_coords else None
+                if coord_data and isinstance(coord_data, dict) and "x" in coord_data and "y" in coord_data:
+                    rx = float(coord_data["x"]) / 100.0
+                    ry = float(coord_data["y"])
+                    side = "left" if rx < 0.5 else "right"
+                else:
+                    if category in class_coords:
+                        side, rx, ry = class_coords[category]
+                    else:
+                        if side_count % 2 == 0:
+                            side, rx = "right", 0.75
+                        else:
+                            side, rx = "left", 0.25
+                        if category == "OUTER" or category == "BAG":
+                            ry = 45
+                        else:
+                            ry = 25
+                        side_count += 1
+                        
+                while any(abs(c[2] - ry) < 6 and c[0] == side for c in used_coords):
+                    ry += 8
+                used_coords.append((side, rx, ry))
+                
+                dot_left = f"{rx * 100}%"
+                dot_top = f"{ry}%"
+                
+                tags_overlay_html += f'<div style="position: absolute; top: {dot_top}; left: {dot_left}; width: 8px; height: 8px; border-radius: 50%; background-color: #ff4b4b; border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transform: translate(-50%, -50%); z-index: 10;"></div>\n'
+                
+                tag_width = 80
+                line_y = f"{ry}%"
+                tag_y = f"calc({ry}% - 14px)"
+                prd_link = f"https://www.halfclub.com/product/{prod.get('prdNo', '')}"
+                
+                if side == "left":
+                    line_left = "95px"
+                    line_width = f"calc({rx * 100}% - 95px)"
+                    tags_overlay_html += f"""
+                    <div style="position: absolute; top: {line_y}; left: {line_left}; width: {line_width}; border-top: 1px dashed #ff4b4b; z-index: 9;"></div>
+                    <a href="{prd_link}" target="_blank" style="text-decoration: none; position: absolute; top: {tag_y}; left: 15px; width: {tag_width}px; height: 28px; background-color: white; border: 1.5px solid #ff4b4b; border-radius: 14px; color: #ff4b4b; font-size: 11px; font-weight: bold; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.15); z-index: 11; transition: transform 0.2s;">
+                        #{tag_word}
+                    </a>
+                    """
+                else:
+                    line_left = f"{rx * 100}%"
+                    line_width = f"calc(100% - 95px - {rx * 100}%)"
+                    tags_overlay_html += f"""
+                    <div style="position: absolute; top: {line_y}; left: {line_left}; width: {line_width}; border-top: 1px dashed #ff4b4b; z-index: 9;"></div>
+                    <a href="{prd_link}" target="_blank" style="text-decoration: none; position: absolute; top: {tag_y}; right: 15px; width: {tag_width}px; height: 28px; background-color: white; border: 1.5px solid #ff4b4b; border-radius: 14px; color: #ff4b4b; font-size: 11px; font-weight: bold; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.15); z-index: 11; transition: transform 0.2s;">
+                        #{tag_word}
+                    </a>
+                    """
+                    
+            html_content = f"""
+            <div style="position: relative; width: 100%; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                <img src="data:image/jpeg;base64,{img_b64}" style="width: 100%; display: block;" />
+                {tags_overlay_html}
+            </div>
+            """
+            st.markdown(html_content, unsafe_allow_html=True)
+            
+            # Display selected products list with details below the image
+            st.divider()
+            st.subheader("🛍️ 코디 상품 정보")
+            for prod in matched_products:
+                prd_no = prod.get('prdNo')
+                prd_nm = prod.get('prdNm')
+                brand_nm = prod.get('brandNm')
+                price = prod.get('dcPrcApp', 0)
+                prd_link = f"https://www.halfclub.com/product/{prd_no}"
+                
+                col1, col2 = st.columns([1, 4])
+                with col1:
+                    img_url = prod.get('appPrdImgUrl', '')
+                    if img_url:
+                        st.image(img_url, use_container_width=True)
+                with col2:
+                    st.markdown(f"**[{brand_nm}]** {prd_nm}")
+                    st.markdown(f"<span style='color:#ff4b4b; font-weight:bold;'>₩{price:,}</span>", unsafe_allow_html=True)
+                    st.markdown(f"<a href='{prd_link}' target='_blank' style='display:inline-block; padding:4px 12px; background-color:#333; color:white; border-radius:4px; font-size:11px; text-decoration:none; font-weight:bold;'>상세보기</a>", unsafe_allow_html=True)
+                st.write("")
+
 def main():
     st.title("👗 코디 상품 추천 서비스 프로토타입")
     st.markdown("왼쪽에서 상품을 선택하면, AI가 분석한 맞춤 코디와 실제 추천 상품이 우측에 실시간으로 표시됩니다.")
     
-    use_context_aware = st.checkbox("🌟 상황인지형(Context-Aware) '오늘의 코디' 추천 모드 활성화", value=True)
+    # Mode selector
+    mode = st.radio(
+        "🛠️ 작동 모드 선택", 
+        ["🌟 AI 상황 맞춤 자동 코디 추천", "🎨 내 맘대로 수동 코디 조합 (최대 6개)", "👕 단품 기준 AI 추천 & 가상 착장"], 
+        horizontal=True
+    )
     st.divider()
     
-    if use_context_aware:
+    if mode == "🌟 AI 상황 맞춤 자동 코디 추천":
         render_context_aware_ui()
+        return
+        
+    elif mode == "🎨 내 맘대로 수동 코디 조합 (최대 6개)":
+        render_manual_coordination_ui()
         return
     
     if "selected_product" not in st.session_state:

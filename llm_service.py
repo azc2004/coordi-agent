@@ -426,11 +426,8 @@ def generate_outfit_flatlay_image(component_images, weather_desc, product_names=
         st.warning(f"AI 코디 화보 생성 실패, 캔버스 보드로 대체합니다: {e}")
         return create_flatlay_fallback_board(component_images)
 
-def detect_item_coordinates(image, keywords):
+def detect_item_coordinates(image, numbered_keywords):
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-    
-    # Clean the keywords to match what's shown
-    keywords_clean = [k.split()[-1] if k else '아이템' for k in keywords]
     
     prompt = f"""
     당신은 패션 코디 전문 에디터입니다.
@@ -439,17 +436,17 @@ def detect_item_coordinates(image, keywords):
     x는 가로 축 (0 = 왼쪽 테두리, 100 = 오른쪽 테두리)
     y는 세로 축 (0 = 위쪽 테두리, 100 = 아래쪽 테두리)
     
-    찾아야 할 아이템 목록:
-    {", ".join([f"'{k}'" for k in keywords_clean])}
+    찾아야 할 아이템 목록 (인덱스_아이템명 형식):
+    {", ".join([f"'{k}'" for k in numbered_keywords])}
     
     정확히 아래 형식의 JSON 객체로 반환하세요 (마크다운 블록이나 다른 텍스트는 절대 포함하지 마세요):
     {{
-        "item_name": {{ "x": 정수, "y": 정수 }},
+        "인덱스_아이템명": {{ "x": 정수, "y": 정수 }},
         ...
     }}
     
     주의 사항:
-    - JSON 객체의 키(Key)는 반드시 위에 제공된 아이템 목록명과 정확히 일치해야 합니다.
+    - JSON 객체의 키(Key)는 반드시 위에 제공된 '인덱스_아이템명' 목록과 토씨 하나 틀리지 않고 100% 동일해야 합니다. 영어로 번역하거나 형식을 변경하지 마세요.
     - 정밀하게 위치를 찾으세요. 아이템의 실제 중심점을 가리켜야 합니다. 예:
       - 신발/부츠: y는 보통 75에서 95 사이입니다.
       - 상의/블라우스: y는 보통 20에서 45 사이입니다.
@@ -477,21 +474,32 @@ def detect_item_coordinates(image, keywords):
         )
         data = json.loads(response.text)
         
-        # Build mapping from clean keywords to original keywords
+        # Build mapping from numbered_keywords to coordinates
         coord_map = {}
-        for original_k, clean_k in zip(keywords, keywords_clean):
+        for num_kw in numbered_keywords:
             match_key = None
+            prefix = num_kw.split("_")[0] + "_"
+            
+            # 1. Exact match
             for key in data.keys():
-                if clean_k in key or key in clean_k:
+                if key == num_kw:
                     match_key = key
                     break
+                    
+            # 2. Fallback index prefix match (handles translation or renaming by model)
+            if not match_key:
+                for key in data.keys():
+                    if key.startswith(prefix):
+                        match_key = key
+                        break
+                        
             if match_key and isinstance(data[match_key], dict):
-                coord_map[original_k] = {
+                coord_map[num_kw] = {
                     "x": int(data[match_key].get("x", 50)),
                     "y": int(data[match_key].get("y", 50))
                 }
             else:
-                coord_map[original_k] = None
+                coord_map[num_kw] = None
         return coord_map
     except Exception as e:
         print(f"Error detecting item coordinates: {e}")

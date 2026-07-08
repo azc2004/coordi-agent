@@ -205,7 +205,7 @@ def render_context_aware_ui():
                         # Run vision locator to get exact coordinates of each item in the generated image
                         detected_coords = {}
                         try:
-                            keywords_list = [prod.get('matched_keyword', '').split()[-1] if prod.get('matched_keyword', '') else '아이템' for prod in matched_products]
+                            keywords_list = [f"{idx}_{prod.get('matched_keyword', '').split()[-1] if prod.get('matched_keyword', '') else '아이템'}" for idx, prod in enumerate(matched_products)]
                             with st.spinner("해시태그 위치 정밀 조율 중..."):
                                 detected_coords = llm_service.detect_item_coordinates(flatlay_img, keywords_list)
                         except Exception as ex:
@@ -218,7 +218,8 @@ def render_context_aware_ui():
                             tag_word = keyword.split()[-1] if keyword else '아이템'
                             
                             # Check if Vision AI found coordinates
-                            coord_data = detected_coords.get(tag_word) if detected_coords else None
+                            num_kw = f"{idx}_{tag_word}"
+                            coord_data = detected_coords.get(num_kw) if detected_coords else None
                             if coord_data and isinstance(coord_data, dict) and "x" in coord_data and "y" in coord_data:
                                 rx = float(coord_data["x"]) / 100.0
                                 ry = float(coord_data["y"])

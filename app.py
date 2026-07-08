@@ -311,7 +311,7 @@ def main():
     st.title("👗 코디 상품 추천 서비스 프로토타입")
     st.markdown("왼쪽에서 상품을 선택하면, AI가 분석한 맞춤 코디와 실제 추천 상품이 우측에 실시간으로 표시됩니다.")
     
-    use_context_aware = st.checkbox("🌟 상황인지형(Context-Aware) '오늘의 코디' 추천 모드 활성화", value=False)
+    use_context_aware = st.checkbox("🌟 상황인지형(Context-Aware) '오늘의 코디' 추천 모드 활성화", value=True)
     st.divider()
     
     if use_context_aware:

@@ -191,6 +191,15 @@ def render_context_aware_ui():
                 with st.spinner("최고의 패션 매거진 화보(코디 샷)를 생성 중입니다... (약 15~30초 소요)"):
                     flatlay_img = generate_outfit_flatlay_image(component_images, weather_str, prd_names, has_bag, has_outer)
                     
+                # Call Trend Evaluator
+                with st.spinner("최신 패션 트렌드 선호도 검증 중..."):
+                    trend_eval = llm_service.evaluate_outfit_trendiness(
+                        outfit_data.get('theme', ''),
+                        outfit_data.get('description', ''),
+                        outfit_data.get('tags', []),
+                        matched_products
+                    )
+                    
                 # Layout: Split into Left (Image) and Right (Products & Description)
                 res_col_left, res_col_right = st.columns([4, 5])
                 
@@ -313,6 +322,25 @@ def render_context_aware_ui():
                             st.markdown(f"<a href='{prd_link}' target='_blank' style='text-decoration:none; color:inherit;'><p style='font-size:12px; margin-bottom:2px; height:36px; overflow:hidden;'>{prd_nm}</p></a>", unsafe_allow_html=True)
                             st.markdown(f"<span style='color:#ff4b4b; font-weight:bold;'>₩{price:,}</span>", unsafe_allow_html=True)
                             st.markdown(f"<a href='{prd_link}' target='_blank' style='display:block; text-align:center; padding:6px 0; margin-top:10px; background-color:#333; color:white; border-radius:4px; font-size:12px; text-decoration:none; font-weight:bold;'>상세보기</a>", unsafe_allow_html=True)
+                             
+                    # Display Trend Report under the products
+                    st.divider()
+                    st.write("### 🎖️ AI 패션 트렌드 검증 리포트 (Fashion Critic)")
+                    m_col1, m_col2, m_col3 = st.columns(3)
+                    with m_col1:
+                        st.metric("📈 트렌드 지수", f"{trend_eval.get('trend_score', 8)}/10")
+                    with m_col2:
+                        st.metric("🎨 색상 조화도", f"{trend_eval.get('color_score', 8)}/10")
+                    with m_col3:
+                        st.metric("📐 실루엣 핏", f"{trend_eval.get('fit_score', 8)}/10")
+                        
+                    st.markdown(f"""
+                    <div style="background-color: #f8f9fa; border-left: 4px solid #ff4b4b; padding: 15px; border-radius: 8px; margin-top: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                        <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #333; font-weight: normal;">
+                            {trend_eval.get('trend_analysis', '')}
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
             else:
                 st.error("AI가 코디를 추천하지 못했습니다.")
 
@@ -324,6 +352,8 @@ def render_manual_coordination_ui():
         st.session_state.manual_flatlay_img = None
     if "manual_detected_coords" not in st.session_state:
         st.session_state.manual_detected_coords = {}
+    if "manual_trend_evaluation" not in st.session_state:
+        st.session_state.manual_trend_evaluation = None
         
     opt_col, res_col = st.columns([4, 5])
     
@@ -345,6 +375,7 @@ def render_manual_coordination_ui():
                         st.session_state.manual_selected_items.pop(idx)
                         st.session_state.manual_flatlay_img = None  # Reset generated image
                         st.session_state.manual_detected_coords = {}
+                        st.session_state.manual_trend_evaluation = None  # Reset evaluation
                         st.rerun()
         else:
             st.info("아래 검색결과에서 상품을 찾아 ➕ 버튼을 클릭해 코디 상품으로 추가하세요.")
@@ -402,6 +433,7 @@ def render_manual_coordination_ui():
                                 st.session_state.manual_selected_items.append(source)
                                 st.session_state.manual_flatlay_img = None  # Reset generated image
                                 st.session_state.manual_detected_coords = {}
+                                st.session_state.manual_trend_evaluation = None  # Reset evaluation
                                 st.rerun()
             else:
                 st.warning("검색 결과가 없습니다.")
@@ -445,6 +477,19 @@ def render_manual_coordination_ui():
                 with st.spinner("해시태그 위치 정밀 조율 중..."):
                     detected_coords = llm_service.detect_item_coordinates(flatlay_img, keywords_list)
                     st.session_state.manual_detected_coords = detected_coords
+                    
+                # Call Trend Evaluator
+                with st.spinner("최신 패션 트렌드 선호도 검증 중..."):
+                    theme_str = f"사용자 수동 조합 코디 ({weather_str} 테마)"
+                    desc_str = f"사용자가 직접 매칭한 상품 {len(matched_products)}개의 코디 세트입니다."
+                    tags_str = [p.get('matched_keyword', '아이템') for p in matched_products]
+                    trend_eval = llm_service.evaluate_outfit_trendiness(
+                        theme_str,
+                        desc_str,
+                        tags_str,
+                        matched_products
+                    )
+                    st.session_state.manual_trend_evaluation = trend_eval
             else:
                 st.error("화보 생성에 실패했습니다.")
                 
@@ -542,6 +587,27 @@ def render_manual_coordination_ui():
                     st.markdown(f"<span style='color:#ff4b4b; font-weight:bold;'>₩{price:,}</span>", unsafe_allow_html=True)
                     st.markdown(f"<a href='{prd_link}' target='_blank' style='display:inline-block; padding:4px 12px; background-color:#333; color:white; border-radius:4px; font-size:11px; text-decoration:none; font-weight:bold;'>상세보기</a>", unsafe_allow_html=True)
                 st.write("")
+                
+            # Display Trend Report below the product info
+            if "manual_trend_evaluation" in st.session_state and st.session_state.manual_trend_evaluation is not None:
+                trend_eval = st.session_state.manual_trend_evaluation
+                st.divider()
+                st.subheader("🎖️ AI 패션 트렌드 검증 리포트 (Fashion Critic)")
+                m_col1, m_col2, m_col3 = st.columns(3)
+                with m_col1:
+                    st.metric("📈 트렌드 지수", f"{trend_eval.get('trend_score', 8)}/10")
+                with m_col2:
+                    st.metric("🎨 색상 조화도", f"{trend_eval.get('color_score', 8)}/10")
+                with m_col3:
+                    st.metric("📐 실루엣 핏", f"{trend_eval.get('fit_score', 8)}/10")
+                    
+                st.markdown(f"""
+                <div style="background-color: #f8f9fa; border-left: 4px solid #ff4b4b; padding: 15px; border-radius: 8px; margin-top: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                    <p style="margin: 0; font-size: 13.5px; line-height: 1.6; color: #333; font-weight: normal;">
+                        {trend_eval.get('trend_analysis', '')}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
 
 def main():
     st.title("👗 코디 상품 추천 서비스")

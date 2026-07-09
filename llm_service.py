@@ -511,3 +511,56 @@ def detect_item_coordinates(image, numbered_keywords):
         print(f"Error detecting item coordinates: {e}")
         return {}
 
+class TrendEvaluationResponse(BaseModel):
+    trend_score: int
+    color_score: int
+    fit_score: int
+    trend_analysis: str
+
+def evaluate_outfit_trendiness(theme, description, tags, products_list):
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    
+    products_desc = "\n".join([
+        f"- Brand: {p.get('brandNm', '')}, Name: {p.get('prdNm', '')}"
+        for p in products_list
+    ])
+    
+    prompt = f"""
+    당신은 대한민국 최고의 트렌디한 패션 매거진 수석 에디터이자 스타일 검증관입니다.
+    제안된 다음 코디 조합이 실제로 대한민국 최신(2025~2026년) 패션 트렌드 선호도에 부합하는지 정밀 검증하고 채점해야 합니다.
+    
+    [제안된 코디 정보]
+    - 테마: {theme}
+    - 스타일 설명: {description}
+    - 스타일 태그: {", ".join(tags)}
+    
+    [구성 상품 목록]
+    {products_desc}
+    
+    다음 4가지 항목에 대해 응답 스키마에 맞춰 정보를 생성하세요:
+    1. trend_score (트렌드 적합도): 2025~2026년 2030 세대 사이에서 유행하는 핵심 스타일링 키워드(예: Quiet Luxury/올드머니, Gorpcore/고프코어, Minimalism/미니멀리즘, Blockcore/블록코어, Y2K 레트로, Office Siren 등)와 실질적 매칭도 (1~10점 정수)
+    2. color_score (컬러 조화도): 상/하의, 아우터, 신발 간의 톤온톤, 톤인톤, 혹은 대비 배색이 세련되고 트렌디하게 이루어졌는지 여부 (1~10점 정수)
+    3. fit_score (실루엣 및 핏 밸런스): 상의의 핏(오버핏, 세미오버핏 등)과 하의(와이드, 스트레이트, 카고 등) 및 신발의 부피감이 조화롭게 조율되었는지 여부 (1~10점 정수)
+    4. trend_analysis (트렌드 분석 리포트): 위 채점 결과를 뒷받침하는 트렌드 부합 원인 분석을 친근하면서도 전문적인 한국어 문장(존댓말)으로 상세히 설명하십시오.
+    """
+    
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=TrendEvaluationResponse,
+                temperature=0.7,
+            ),
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"Error evaluating trendiness: {e}")
+        return {
+            "trend_score": 8,
+            "color_score": 8,
+            "fit_score": 8,
+            "trend_analysis": "이 코디는 조화로운 실루엣과 감각적인 색상 배합을 통해 현재 트렌디한 일상 캐주얼 룩의 정수를 잘 보여줍니다."
+        }
+

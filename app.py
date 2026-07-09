@@ -449,6 +449,7 @@ def render_manual_coordination_ui():
                 prd_nm = prod.get('prdNm', '')
                 category = classify_product(prd_nm, keyword)
                 tag_word = keyword.split()[-1] if keyword else '아이템'
+                prd_link = f"https://www.halfclub.com/product/{prod.get('prdNo', '')}"
                 
                 num_kw = f"{idx}_{tag_word}"
                 coord_data = detected_coords.get(num_kw) if detected_coords else None

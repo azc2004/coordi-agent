@@ -535,7 +535,7 @@ def render_manual_coordination_ui():
                 st.write("")
 
 def main():
-    st.title("👗 코디 상품 추천 서비스 프로토타입")
+    st.title("👗 코디 상품 추천 서비스")
     st.markdown("왼쪽에서 상품을 선택하면, AI가 분석한 맞춤 코디와 실제 추천 상품이 우측에 실시간으로 표시됩니다.")
     
     # Mode selector

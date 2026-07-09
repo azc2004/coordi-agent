@@ -364,7 +364,7 @@ def generate_outfit_flatlay_image(component_images, weather_desc, product_names=
     rule_idx = 2
     
     # Strict rule for straight pants and shoes alignment
-    styling_rules.append(f"{rule_idx}. [매우 중요] 하의(팬츠, 청바지, 슬랙스 등)는 절대 반으로 접거나 구기지 말고, 다리 모양 그대로 아래로 길게 일자로 완전히 펼쳐진 상태(Laid out straight without folding)로 배치하세요. 그리고 신발(구두, 부츠, 샌들 등)은 일자로 펼쳐진 하의의 맨 밑단 바로 아래에 자연스럽게 맞닿아 이어지도록 배치하여 실제 서 있는 다리 실루엣처럼 연출하세요. 또한, 신발의 방향은 반드시 발목 입구(발이 들어가는 구멍)가 바지 단이 있는 위쪽을 향하고, 신발의 앞코(toe, 앞부분)가 화면 바닥 방향인 아래쪽을 향하게 하세요 (즉, 신발의 입구가 위로, 앞코가 아래로 가도록 하여 사람이 실제로 서 있는 실루엣에 맞아야 하며, 절대로 신발의 앞코가 바지 밑단 안쪽으로 기어 들어간 거꾸로 뒤집힌 방향(Toes pointing up and opening pointing down)으로 그리지 마세요).")
+    styling_rules.append(f"{rule_idx}. [매우 중요] 하의(팬츠, 청바지, 슬랙스 등)는 절대 반으로 접거나 구기지 말고, 다리 모양 그대로 아래로 길게 일자로 완전히 펼쳐진 상태(Laid out straight without folding)로 배치하세요. 그리고 신발(구두, 부츠, 스니커즈 등)은 일자로 펼쳐진 하의의 맨 밑단 바로 아래에 자연스럽게 맞닿아 이어지도록 배치하여 실제 서 있는 다리 실루엣처럼 연출하세요.")
     rule_idx += 1
     
     if has_outer:
@@ -400,6 +400,12 @@ def generate_outfit_flatlay_image(component_images, weather_desc, product_names=
     {rule_idx+2}. [매우 중요] 이미지 위에 제품과 무관한 어떠한 글자/텍스트(예: SIZE, 2color, COOL 등), 아이콘(온도계, 화살표 등), 로고, 그래픽 요소도 절대 생성하지 마세요. 오직 옷과 자연스러운 바닥 배경만 존재해야 합니다.
     {rule_idx+3}. [경고] 입력 이미지로 제공되지 않은 다른 의류, 신발, 가방, 액세서리 등을 임의로 추가하여 그리지 마세요. 오직 입력 이미지로 제공된 상품들만 사용하여 코디 샷을 완성해야 하며, 제품의 총 개수는 제공된 입력 이미지의 개수({len(component_images)}개)와 정확히 일치해야 합니다.
     {rule_idx+4}. 이미지는 세로형(3:4 비율) 포스터 컷으로 렌더링하세요.
+
+    [★초특급 경고 - 신발(구두, 스니커즈, 로퍼 등)의 상하 정방향 배치 규칙]
+    - 신발을 배치할 때, 신발의 뒤꿈치 및 발목이 들어가는 입구(Open heel/opening)가 무조건 '위쪽(하의 바지 밑단 방향)'을 향하게 하세요.
+    - 신발의 둥근 앞코(Toes)는 무조건 '아래쪽(화면의 맨 밑바닥 방향)'을 가리키도록 하세요.
+    - 입력 이미지(누끼 사진)에서 신발의 앞코가 위를 가리키고 있더라도, 화보에서는 **반드시 180도 회전시켜 앞코가 아래를 향하게 그리십시오.**
+    - 신발의 앞코가 위쪽을 가리키며 바지 밑단을 파고들어가는 거꾸로 뒤집힌(upside-down) 형태는 사람이 물구나무를 선 실루엣이 되므로 절대 생성 금지합니다.
     """
     
     contents = [prompt] + component_images

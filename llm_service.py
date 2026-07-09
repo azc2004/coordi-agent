@@ -364,7 +364,7 @@ def generate_outfit_flatlay_image(component_images, weather_desc, product_names=
     rule_idx = 2
     
     # Strict rule for straight pants and shoes alignment
-    styling_rules.append(f"{rule_idx}. [매우 중요] 하의(팬츠, 청바지, 슬랙스 등)는 절대 반으로 접거나 구기지 말고, 다리 모양 그대로 아래로 길게 일자로 완전히 펼쳐진 상태(Laid out straight without folding)로 배치하세요. 그리고 신발(구두, 부츠, 샌들 등)은 일자로 펼쳐진 하의의 맨 밑단 바로 아래에 자연스럽게 맞닿아 이어지도록 배치하여 실제 서 있는 다리 실루엣처럼 연출하세요.")
+    styling_rules.append(f"{rule_idx}. [매우 중요] 하의(팬츠, 청바지, 슬랙스 등)는 절대 반으로 접거나 구기지 말고, 다리 모양 그대로 아래로 길게 일자로 완전히 펼쳐진 상태(Laid out straight without folding)로 배치하세요. 그리고 신발(구두, 부츠, 샌들 등)은 일자로 펼쳐진 하의의 맨 밑단 바로 아래에 자연스럽게 맞닿아 이어지도록 배치하여 실제 서 있는 다리 실루엣처럼 연출하세요. 또한, 신발의 방향은 반드시 발목 입구(발이 들어가는 구멍)가 바지 단이 있는 위쪽을 향하고, 신발의 앞코(toe, 앞부분)가 화면 바닥 방향인 아래쪽을 향하게 하세요 (즉, 신발의 입구가 위로, 앞코가 아래로 가도록 하여 사람이 실제로 서 있는 실루엣에 맞아야 하며, 절대로 신발의 앞코가 바지 밑단 안쪽으로 기어 들어간 거꾸로 뒤집힌 방향(Toes pointing up and opening pointing down)으로 그리지 마세요).")
     rule_idx += 1
     
     if has_outer:

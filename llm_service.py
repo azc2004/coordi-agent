@@ -307,7 +307,7 @@ def generate_context_aware_outfit(target_date: str, weather: str, gender: str, a
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=ContextAwareOutfitResponse,
-                temperature=0.7,
+                temperature=1.0,
             ),
         )
         return response.text

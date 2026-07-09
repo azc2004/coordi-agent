@@ -151,21 +151,30 @@ def render_context_aware_ui():
                         )
                         
                         if search_res:
+                            candidates = []
                             for sp in search_res:
                                 source = sp.get('_source', {})
                                 gnd_list = source.get('gndCd', [])
                                 if "01" in gnd_list and "02" in gnd_list and "03" in gnd_list:
                                     continue
+                                if source.get('appPrdImgUrl'):
+                                    candidates.append(source)
                                     
-                                img_url = source.get('appPrdImgUrl', '')
-                                if img_url:
-                                    img = load_image_from_url(img_url)
-                                    if img:
-                                        source['matched_keyword'] = s_keyword
-                                        matched_products.append(source)
-                                        component_images.append(img)
-                                        matched = True
-                                        break
+                            # Shuffle the top 5 candidates to guarantee diversity while preserving relevance
+                            import random
+                            top_candidates = candidates[:5]
+                            random.shuffle(top_candidates)
+                            all_candidates = top_candidates + candidates[5:]
+                            
+                            for candidate in all_candidates:
+                                img_url = candidate.get('appPrdImgUrl', '')
+                                img = load_image_from_url(img_url)
+                                if img:
+                                    candidate['matched_keyword'] = s_keyword
+                                    matched_products.append(candidate)
+                                    component_images.append(img)
+                                    matched = True
+                                    break
                             if matched:
                                 break
                                 

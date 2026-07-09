@@ -367,8 +367,24 @@ def render_manual_coordination_ui():
                         
                         # Check if already added
                         is_added = any(p.get('prdNo') == prd_no for p in st.session_state.manual_selected_items)
+                        category_to_add = classify_product(prd_nm, search_query)
+                        category_exists = any(
+                            classify_product(p.get('prdNm', ''), p.get('matched_keyword', '')) == category_to_add 
+                            for p in st.session_state.manual_selected_items
+                        )
+                        
                         if is_added:
                             st.button("추가됨 ✔️", key=f"add_{prd_no}", disabled=True, use_container_width=True)
+                        elif category_exists:
+                            cat_korean = {
+                                "TOP": "상의",
+                                "BOTTOM": "하의",
+                                "OUTER": "아우터",
+                                "BAG": "가방",
+                                "SHOES": "신발",
+                                "ACC": "액세서리"
+                            }.get(category_to_add, "기타")
+                            st.button(f"{cat_korean} 추가됨 🚫", key=f"add_{prd_no}", disabled=True, use_container_width=True, help="코디에는 동일한 종류의 상품을 중복하여 등록할 수 없습니다.")
                         else:
                             disable_add = selected_count >= 6
                             if st.button("➕ 코디 추가", key=f"add_{prd_no}", disabled=disable_add, use_container_width=True):

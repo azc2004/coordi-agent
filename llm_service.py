@@ -1,4 +1,5 @@
 import streamlit as st
+import json
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
@@ -563,4 +564,197 @@ def evaluate_outfit_trendiness(theme, description, tags, products_list):
             "fit_score": 8,
             "trend_analysis": "이 코디는 조화로운 실루엣과 감각적인 색상 배합을 통해 현재 트렌디한 일상 캐주얼 룩의 정수를 잘 보여줍니다."
         }
+
+
+def generate_full_outfit_try_on(model_img, flatlay_img, theme="코디 스타일", gender="여성", age="30대"):
+    """
+    코디 완성 플랫레이(Flat-lay) 이미지에 있는 모든 의상을
+    성별과 연령대에 매치되는 가상 고정 모델 위에 자연스럽게 일괄 착장(VTON)하여 전신 패션 화보 컷을 생성합니다.
+    """
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    
+    prompt = f"""
+    당신은 전문 패션 이미지 에디터입니다.
+    제공된 이미지들을 활용하여, 모델이 '코디 완성 사진(바닥에 눕혀 코디된 플랫레이 화보)'에 있는 모든 의류와 소품들을 자연스럽게 착용한 최종 전신 화보 컷을 생성하는 것이 당신의 임무입니다.
+    
+    - 이미지 1 (첫 번째 이미지): 가상의 기본 피팅 모델 이미지입니다 (성별: {gender}, 연령대: {age}). 이 모델의 고유한 얼굴 생김새, 체형 비율, 헤어스타일, 그리고 포즈의 느낌을 그대로 보존해야 합니다.
+    - 이미지 2 (두 번째 이미지): 여러 의류, 바지, 신발, 가방 등이 조화롭게 코디된 '코디 완성 사진(Flat-lay)' 화보입니다.
+    
+    [준수 지침]
+    1. 이미지 2(코디 완성 사진)에 포함된 상의, 하의, 아우터(있는 경우), 신발, 가방(있는 경우) 등의 모든 패션 아이템들을 이미지 1의 피팅 모델 몸 위에 완벽하게 일체화시켜 자연스러운 '착장 샷'으로 표현하세요.
+    2. 코디 완성 사진에 배치된 각 제품의 고유한 색상, 패턴, 소재의 질감, 단추 및 실루엣을 100% 반영하여 피팅 모델에게 정확하게 입혀주세요.
+    3. 모델의 원래 피부 톤, 머리 모양, 고유 신원은 이미지 1과 매우 흡사하고 자연스럽게 유지되어야 합니다.
+    4. 모델은 이미지 2의 감각적인 스타일과 테마('{theme}')에 걸맞는 자연스럽고 자신감 있는 전신 포즈로 고품질의 패션 매거진 카탈로그 화보처럼 연출되어야 합니다.
+    5. 이미지 위에 어떠한 텍스트나 로고, 불필요한 그래픽 요소도 생성하지 마세요.
+    """
+    
+    try:
+        response = call_gemini_with_retry(
+            client=client,
+            model='gemini-3.1-flash-image',
+            contents=[prompt, model_img, flatlay_img],
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(
+                    aspect_ratio="3:4",
+                ),
+            ),
+        )
+        
+        for part in response.candidates[0].content.parts:
+            if part.inline_data:
+                return Image.open(BytesIO(part.inline_data.data))
+                
+        return None
+    except Exception as e:
+        st.error(f"AI 가상 코디 착장 생성 중 오류가 발생했습니다: {e}")
+        return None
+
+
+class ImageItemAnalysis(BaseModel):
+    category: str = Field(description="추천하는 코디 상품의 품목 카테고리 (예: 바지, 스커트, 원피스, 셔츠, 티셔츠, 아우터 등)")
+    gnd_cd: str = Field(description="추천 상품의 성별 필터 코드. 남성은 '01', 여성은 '02', 남녀공용은 '03' 필수 입력.")
+    category_level: str = Field(description="카테고리 필터 레벨. 카테고리 매핑 정보와 일치할 시 'dpCtgrNo2' 또는 'dpCtgrNo3'를 입력하며, 일치하지 않으면 빈 문자열(\"\")을 입력합니다.")
+    category_code: str = Field(description="제공된 카테고리 매핑 목록 중 해당하는 카테고리 번호. 해당하는 정보가 없으면 빈 문자열(\"\")로 채웁니다.")
+    search_keyword: str = Field(description="자사 검색 API에 전달할 정교하고 함축적인 패션 속성 검색 쿼리 키워드. 품목 카테고리 명칭(예: '바지', '스커트', '원피스' 등), 브랜드명, 성별 단어는 절대 빼고, 스타일링 특징(예: '스트라이프 카라', '린넨 와이드', '체크 플리츠')만 입력하세요.")
+    description: str = Field(description="사진 속 모델의 해당 아이템 스타일에 대한 간단한 묘사.")
+
+class ImageCoordiResponse(BaseModel):
+    gender: str = Field(description="사진 속 인물의 성별 ('여성' 또는 '남성')")
+    age: str = Field(description="사진 속 인물의 예상 연령대 ('20대', '30대', '40대', '50대', '60대', '70대 이상')")
+    items: list[ImageItemAnalysis]
+
+def analyze_image_and_extract_coordi(image):
+    """
+    사용자가 업로드한 착장 이미지(Vision)를 파싱하여, 모델이 입고 있는 패션 아이템들을
+    자사 검색 API용 상세 카테고리 필터 및 키워드로 변환하여 추출합니다.
+    """
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    
+    category_mapping_prompt = """
+    필터링 가능한 카테고리 정보 (category_level 및 category_code):
+    - 여성 원피스: dpCtgrNo2 = 32509
+    - 여성 가디건: dpCtgrNo2 = 32538
+    - 여성 니트/스웨터: dpCtgrNo2 = 32548
+    - 여성 셔츠/블라우스: dpCtgrNo2 = 32558
+    - 여성 티셔츠: dpCtgrNo2 = 32510
+    - 여성 스커트: dpCtgrNo2 = 32539
+    - 여성 데님팬츠: dpCtgrNo2 = 32568
+    - 여성 일반 팬츠/슬랙스: dpCtgrNo2 = 32529
+    - 여성 자켓/아우터: dpCtgrNo2 = 32540
+
+    - 남성 티셔츠: dpCtgrNo2 = 32618
+    - 남성 팬츠/슬랙스: dpCtgrNo2 = 32609
+    - 남성 셔츠: dpCtgrNo2 = 32619
+    - 남성 니트/스웨터: dpCtgrNo2 = 32608
+    - 남성 자켓/아우터: dpCtgrNo2 = 32540
+
+    - 골프 여성 긴바지: dpCtgrNo3 = 111001004
+    - 골프 남성 긴바지: dpCtgrNo3 = 111002001
+    - 골프 여성 스커트: dpCtgrNo3 = 111001006
+    - 골프 여성 반팔티: dpCtgrNo3 = 111001002
+    - 골프 남성 반팔티: dpCtgrNo3 = 111002004
+    """
+    
+    prompt = f"""
+    당신은 일류 패션 이미지 분석가이자 스타일리스트입니다.
+    제시된 이미지(사진 속 모델)의 착장을 세밀히 분석하여, 모델이 입고 있는 모든 패션 아이템(상의, 하의, 아우터, 신발, 가방 등 전신 구성 요소)을 자사 상품 검색 API를 통해 찾을 수 있도록 정확하게 구조화해서 상세 속성을 추출해 주세요.
+    
+    [핵심 추출 및 매핑 지침]
+    1. 사진 속 모델의 전체적인 연령대와 성별을 식별해주세요. (예: 여성, 30대)
+    2. 모델이 **실제로 '몸에 착용하고 있는(입거나 메고 있거나 신고 있는)' 실질적인 의류 및 잡화(상의, 하의/스커트/원피스, 아우터, 신발, 가방)만** 아이템 요소로 추출합니다. (최대 4~5개 품목)
+       - **[주의]** 모델이 손에 대충 뭉쳐서 쥐고 있거나 들고 있는 자켓/코트 등 '착용하지 않은 의류'는 아우터로 절대 추출하지 말고 완전히 무시(Ignore)하세요. 오직 몸에 걸치고 있는 의류만 아우터로 간주합니다.
+       - 모델이 들고 있는 쇼핑백, 비닐봉투, 스마트폰, 기타 패션 액세서리(선글라스, 팔찌) 등은 가방이나 상품으로 추출하지 마세요.
+    3. 각 아이템을 아래의 '카테고리 매핑 목록' 정보와 대조하여 매치되는 항목이 있다면 'category_level' 및 'category_code'를 명확히 작성해주고, 성별 'gnd_cd' 코드를 성별에 맞춰 채워주세요. (여성이면 '02', 남성이면 '01')
+    4. 'search_keyword' 필드는 자사 API 검색 정확도를 위해 매우 중요합니다. 
+       - 검색 키워드는 반드시 [색상/소재 + 디테일 특징 + 아이템 종류 명사]의 결합형태로 정교하게 작성해야 합니다.
+       - 종류 명사는 자사 검색기가 인식할 수 있도록 반드시 포함되어야 합니다.
+         (예: '블랙 폴로 반팔 티셔츠', '와이드 생지 데님 청바지', '브라운 가죽 숄더백', '옐로우 러닝 스니커즈', '베이지 린넨 셔츠', '그레이 숏 패딩 아우터')
+       - 단, 성별 단어(남성, 여성)나 브랜드명(폴로랄프로렌, 리바이스 등)은 검색에 불필요하므로 제외합니다.
+    5. 사진 속 각 아이템에 대한 간결한 묘사를 'description'에 담아 주세요.
+    
+    카테고리 매핑 목록:
+    {category_mapping_prompt}
+    """
+    
+    try:
+        response = call_gemini_with_retry(
+            client=client,
+            model='gemini-2.5-flash',
+            contents=[prompt, image],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=ImageCoordiResponse,
+                temperature=0.4,
+            ),
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"Error analyzing fashion image: {e}")
+        return None
+
+
+class VisualMatchResult(BaseModel):
+    best_index: int = Field(description="후보 리스트 중 대상 아이템 비주얼과 가장 유사한 상품의 0-indexed 인덱스 번호. 만약 단 하나의 후보도 충분히 유사하지 않거나 스타일이 어울리지 않으면 -1을 입력해 주세요.")
+    reason: str = Field(description="가장 유사하다고 판단한 비주얼적 근거 (색상, 실루엣, 소재 등 대조 분석).")
+
+def select_best_visual_match(item_desc, candidate_images_and_details):
+    """
+    Gemini Vision을 사용하여, AI가 이미지에서 분석해낸 특정 아이템 묘사와
+    자사 검색 API 결과 후보군들의 비주얼(썸네일 이미지)을 직접 1:1 대조하여
+    가장 시각적 싱크로율이 높고 스타일이 유사한 상품을 골라냅니다.
+    """
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    
+    prompt = f"""
+    당신은 일류 패션 비주얼 머천다이저입니다.
+    대상 아이템 묘사 정보와 일치하고 시각적(색상, 형태, 소재감, 디테일)으로 가장 유사도가 높은 최적의 상품을 후보 목록에서 한 개 골라주세요.
+    
+    [대상 아이템 요구 속성]
+    {item_desc}
+    
+    [준수 지침]
+    1. 제공된 후보 상품 이미지 및 상품 정보를 보고, 대상 아이템의 색상, 디자인, 카테고리와 가장 완벽히 일치하는 상품의 인덱스 번호(0부터 시작)를 반환하세요.
+    2. **[유사 대체재 허용 지침]**:
+       - 만약 대상 아이템의 특정 색상(예: '옐로우/노란색')과 100% 동일한 색상의 후보 상품이 목록에 단 하나도 없을 경우, **대상의 '종류'(예: 스니커즈/운동화)를 최우선으로 지켜서 가장 스타일이 유사하고 무난한 대체 색상(예: 블랙, 화이트, 그레이 등의 무채색 또는 무난한 캐주얼 운동화)을 차선책으로 선택**해 주십시오. 
+       - 즉, 노란색 운동화가 없다고 해서 아예 매칭을 드랍(-1)하기보다는, 캐주얼 룩의 완성도를 위해 **검정/흰색 캐주얼 스니커즈**를 차선책으로 선택하는 것이 좋습니다.
+       - 그러나, 아예 종류가 전혀 다른 아이템(예: 운동화를 매칭해야 하는데 '쪼리 슬리퍼', '정장 가죽 구두' 등)은 절대로 선택하지 말고 완전히 배제(-1)해야 합니다.
+    3. 색상이나 디자인이 전체 룩의 무드와 너무 엇나가서 코디 완성도를 망치는 부적격 상품(예: 격자무늬나 화려한 패턴이 들어간 중후한 패딩 자켓 등)은 과감하게 고르지 말고 -1을 반환하세요.
+    """
+    
+    contents = [prompt]
+    details_text = "\n[후보 상품 목록]\n"
+    has_valid_images = False
+    
+    for idx, item in enumerate(candidate_images_and_details):
+        details_text += f"- 후보 인덱스 {idx}: 상품명: {item.get('prdNm', '')}, 브랜드: {item.get('brandNm', '')}, 카테고리: {item.get('dpCtgrNm2', '')}\n"
+        img = item.get('_pil_image')
+        if img:
+            contents.append(f"후보 인덱스 {idx} 이미지:")
+            contents.append(img)
+            has_valid_images = True
+            
+    contents.append(details_text)
+    
+    # If no candidate has images, return first one or -1
+    if not has_valid_images:
+        return 0 if candidate_images_and_details else -1
+        
+    try:
+        response = call_gemini_with_retry(
+            client=client,
+            model='gemini-2.5-flash',
+            contents=contents,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=VisualMatchResult,
+                temperature=0.2,
+            ),
+        )
+        res_data = json.loads(response.text)
+        return res_data.get("best_index", -1)
+    except Exception as e:
+        print(f"Error in select_best_visual_match: {e}")
+        return -1
+
 
